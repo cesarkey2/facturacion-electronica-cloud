@@ -1,0 +1,13 @@
+{
+  "name": "enviar-sunat",
+  "version": "1.0.0",
+  "description": "Cloud Run function: remite el comprobante firmado a un endpoint mock de SUNAT y procesa el CDR (RF04)",
+  "main": "index.js",
+  "scripts": {
+    "start": "functions-framework --target=enviarSunat --port=8083",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.4.0"
+  }
+}

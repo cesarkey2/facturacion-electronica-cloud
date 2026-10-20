@@ -1,0 +1,145 @@
+# Orquestación del proceso de facturación electrónica (Cloud Workflows).
+# Los marcadores __X_URL__ los reemplaza Terraform (workflow.tf) con las URL reales de las
+# Cloud Run functions. Cada llamada usa autenticación OIDC con la cuenta de servicio sa-workflow.
+main:
+  params: [input]
+  steps:
+    - ejecutar:
+        try:
+          call: procesar
+          args:
+            comprobante: ${input}
+          result: resultado
+        except:
+          as: e
+          steps:
+            # Cualquier falla no controlada: se guarda el comprobante y el error en la DLQ para reproceso
+            - publicar_dlq:
+                call: googleapis.pubsub.v1.projects.topics.publish
+                args:
+                  topic: ${"projects/" + sys.get_env("GOOGLE_CLOUD_PROJECT_ID") + "/topics/comprobantes-dlq"}
+                  body:
+                    messages:
+                      - data: '${base64.encode(json.encode({"comprobante": input, "error": e}))}'
+            - fin_error:
+                return:
+                  estado: "ERROR"
+    - fin:
+        return: ${resultado}
+
+procesar:
+  params: [comprobante]
+  steps:
+    - validar:
+        try:
+          call: http.post
+          args:
+            url: __VALIDAR_URL__
+            auth:
+              type: OIDC
+            body: ${comprobante}
+          result: validacion
+        retry:
+          predicate: ${http.default_retry_predicate}
+          max_retries: 3
+          backoff:
+            initial_delay: 1
+            max_delay: 10
+            multiplier: 2
+        except:
+          as: e
+          steps:
+            - es_rechazo:
+                switch:
+                  # 400 = comprobante inválido (regla de negocio): no se reintenta
+                  - condition: ${e.code == 400}
+                    return:
+                      estado: "RECHAZADO"
+                      errores: ${e.body.errores}
+            - relanzar:
+                raise: ${e}
+
+    - firmar:
+        try:
+          call: http.post
+          args:
+            url: __FIRMAR_URL__
+            auth:
+              type: OIDC
+            body: ${comprobante}
+          result: firmado
+        retry: ${http.default_retry}
+
+    - enviar_sunat:
+        try:
+          call: http.post
+          args:
+            url: __SUNAT_URL__
+            auth:
+              type: OIDC
+            body: ${firmado.body}
+          result: respuestaSunat
+        retry:
+          predicate: ${http.default_retry_predicate}
+          max_retries: 4
+          backoff:
+            initial_delay: 2
+            max_delay: 30
+            multiplier: 2
+
+    - generar_pdf:
+        try:
+          call: http.post
+          args:
+            url: __PDF_URL__
+            auth:
+              type: OIDC
+            body: ${comprobante}
+          result: pdfGenerado
+        retry: ${http.default_retry}
+
+    # Estado operativo en Firestore (upsert: es idempotente ante reintentos)
+    - registrar_estado:
+        call: googleapis.firestore.v1.projects.databases.documents.patch
+        args:
+          name: ${"projects/" + sys.get_env("GOOGLE_CLOUD_PROJECT_ID") + "/databases/(default)/documents/comprobantes/" + comprobante.serie + "-" + comprobante.numero}
+          body:
+            fields:
+              rucEmisor:
+                stringValue: ${comprobante.ruc}
+              cliente:
+                stringValue: ${comprobante.cliente}
+              total:
+                doubleValue: ${comprobante.total}
+              moneda:
+                stringValue: ${comprobante.moneda}
+              estado:
+                stringValue: "ACEPTADO"
+              cdr:
+                stringValue: ${respuestaSunat.body.numeroCdr}
+        result: registro
+
+    # Evento para la sincronización asíncrona con Cloud SQL (función sincronizar-reportes)
+    - publicar_evento:
+        call: googleapis.pubsub.v1.projects.topics.publish
+        args:
+          topic: ${"projects/" + sys.get_env("GOOGLE_CLOUD_PROJECT_ID") + "/topics/comprobantes-eventos"}
+          body:
+            messages:
+              - data: '${base64.encode(json.encode({"serie": comprobante.serie, "numero": comprobante.numero, "ruc": comprobante.ruc, "cliente": comprobante.cliente, "total": comprobante.total, "moneda": comprobante.moneda, "estado": "ACEPTADO"}))}'
+
+    - notificar:
+        try:
+          call: http.post
+          args:
+            url: __NOTIFICAR_URL__
+            auth:
+              type: OIDC
+            body: ${comprobante}
+          result: notificacion
+        retry: ${http.default_retry}
+
+    - fin_aceptado:
+        return:
+          estado: "PROCESADO"
+          cdr: ${respuestaSunat.body}

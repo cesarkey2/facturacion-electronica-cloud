@@ -1,0 +1,12 @@
+{
+  "tipoComprobante": "FACTURA",
+  "serie": "F001",
+  "numero": "1001",
+  "ruc": "20123456789",
+  "razonSocialEmisor": "Mi Pyme SAC",
+  "cliente": "Cliente de Prueba",
+  "emailCliente": "cliente@example.com",
+  "items": [{ "descripcion": "Servicio de consultoría", "cantidad": 1, "precioUnitario": 100 }],
+  "moneda": "PEN",
+  "total": 118
+}

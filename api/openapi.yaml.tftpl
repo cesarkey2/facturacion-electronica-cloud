@@ -1,0 +1,65 @@
+swagger: "2.0"
+info:
+  title: "API de Facturación Electrónica"
+  description: "Emisión de comprobantes electrónicos (inicia el workflow de facturación)"
+  version: "1.0.0"
+schemes:
+  - https
+produces:
+  - application/json
+consumes:
+  - application/json
+x-google-backend:
+  address: ${backend_url}
+  deadline: 30.0
+securityDefinitions:
+  api_key:
+    type: "apiKey"
+    name: "x-api-key"
+    in: "header"
+# Cuota: límite de tasa por proyecto (600 solicitudes por minuto)
+x-google-management:
+  metrics:
+    - name: "emision-requests"
+      displayName: "Solicitudes de emisión"
+      valueType: INT64
+      metricKind: DELTA
+  quota:
+    limits:
+      - name: "emision-limit"
+        metric: "emision-requests"
+        unit: "1/min/{project}"
+        values:
+          STANDARD: 600
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: "Verificación de disponibilidad (sin API key; usada por el uptime check)"
+      responses:
+        "200":
+          description: "Servicio disponible"
+  /comprobantes:
+    post:
+      operationId: emitirComprobante
+      summary: "Recibe un comprobante e inicia su procesamiento asíncrono"
+      security:
+        - api_key: []
+      x-google-quota:
+        metricCosts:
+          emision-requests: 1
+      parameters:
+        - in: body
+          name: comprobante
+          required: true
+          schema:
+            type: object
+      responses:
+        "202":
+          description: "Comprobante aceptado para procesamiento"
+        "400":
+          description: "Cuerpo inválido"
+        "401":
+          description: "API key ausente o inválida"
+        "429":
+          description: "Cuota excedida"

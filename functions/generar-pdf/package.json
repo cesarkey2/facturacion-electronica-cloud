@@ -1,0 +1,15 @@
+{
+  "name": "generar-pdf",
+  "version": "1.0.0",
+  "description": "Cloud Run function: genera la representacion impresa (RIDE) del comprobante en PDF (RF03)",
+  "main": "index.js",
+  "scripts": {
+    "start": "functions-framework --target=generarPdf --port=8084",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.4.0",
+    "@google-cloud/storage": "^7.0.0",
+    "pdfkit": "^0.15.0"
+  }
+}
